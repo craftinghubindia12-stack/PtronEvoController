@@ -1,0 +1,415 @@
+name: Build Ptron Evo APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.5'
+
+      - name: Create Android project
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/ptron/evo
+          mkdir -p app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "PtronEvoController"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "9.3.0" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+          }
+
+          android {
+              namespace = "com.ptron.evo"
+              compileSdk = 36
+
+              defaultConfig {
+                  applicationId = "com.ptron.evo"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+          }
+          EOF
+
+          cat > app/src/main/res/values/colors.xml <<'EOF'
+          <resources>
+              <color name="black">#000000</color>
+              <color name="white">#FFFFFF</color>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">Ptron Studio Evo</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#00A8FF</item>
+                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:statusBarColor">#FFFFFF</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="@string/app_name"
+                  android:allowBackup="false"
+                  android:supportsRtl="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+
+                  </activity>
+
+                  <service
+                      android:name=".MediaListenerService"
+                      android:label="Ptron Studio Evo Media Access"
+                      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.service.notification.NotificationListenerService"/>
+                      </intent-filter>
+
+                  </service>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/ptron/evo/MediaListenerService.java <<'EOF'
+          package com.ptron.evo;
+
+          import android.content.ComponentName;
+          import android.media.session.MediaController;
+          import android.media.session.MediaSessionManager;
+          import android.service.notification.NotificationListenerService;
+
+          import java.util.List;
+
+          public class MediaListenerService extends NotificationListenerService {
+
+              private static MediaController controller;
+
+              public static void refresh(NotificationListenerService service) {
+                  try {
+                      MediaSessionManager manager =
+                              (MediaSessionManager) service.getSystemService(MEDIA_SESSION_SERVICE);
+
+                      ComponentName component =
+                              new ComponentName(service, MediaListenerService.class);
+
+                      List<MediaController> sessions =
+                              manager.getActiveSessions(component);
+
+                      controller = sessions.isEmpty() ? null : sessions.get(0);
+
+                  } catch (Exception e) {
+                      controller = null;
+                  }
+              }
+
+              public static void playPause() {
+                  if (controller == null) return;
+
+                  if (controller.getPlaybackState() != null &&
+                      controller.getPlaybackState().getState() ==
+                      android.media.session.PlaybackState.STATE_PLAYING) {
+                      controller.getTransportControls().pause();
+                  } else {
+                      controller.getTransportControls().play();
+                  }
+              }
+
+              public static void next() {
+                  if (controller != null)
+                      controller.getTransportControls().skipToNext();
+              }
+
+              public static void previous() {
+                  if (controller != null)
+                      controller.getTransportControls().skipToPrevious();
+              }
+
+              @Override
+              public void onListenerConnected() {
+                  refresh(this);
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/ptron/evo/MainActivity.java <<'EOF'
+          package com.ptron.evo;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.media.AudioManager;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.Gravity;
+          import android.view.ViewGroup;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.SeekBar;
+          import android.widget.Spinner;
+          import android.widget.ArrayAdapter;
+          import android.widget.TextView;
+          import android.graphics.Color;
+
+          public class MainActivity extends Activity {
+
+              private AudioManager audioManager;
+              private TextView status;
+              private TextView volumeText;
+
+              private int dp(float value) {
+                  return (int)(value * getResources().getDisplayMetrics().density + 0.5f);
+              }
+
+              private TextView label(String text, int size) {
+                  TextView v = new TextView(this);
+                  v.setText(text);
+                  v.setTextSize(size);
+                  v.setTextColor(Color.BLACK);
+                  v.setGravity(Gravity.CENTER);
+                  v.setPadding(dp(8), dp(8), dp(8), dp(8));
+                  return v;
+              }
+
+              private Button button(String text) {
+                  Button b = new Button(this);
+                  b.setText(text);
+                  b.setTextSize(14);
+                  return b;
+              }
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  audioManager = (AudioManager)getSystemService(AUDIO_SERVICE);
+
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(dp(12), dp(12), dp(12), dp(12));
+
+                  TextView title = label("PTRON STUDIO EVO", 24);
+                  title.setTypeface(null, android.graphics.Typeface.BOLD);
+                  root.addView(title);
+
+                  status = label("● Media control: Checking…", 14);
+                  root.addView(status);
+
+                  Button access = button("ENABLE MEDIA ACCESS");
+                  access.setOnClickListener(v -> {
+                      try {
+                          startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"));
+                      } catch (Exception e) {
+                          startActivity(new Intent(Settings.ACTION_SETTINGS));
+                      }
+                  });
+                  root.addView(access);
+
+                  LinearLayout media = new LinearLayout(this);
+                  media.setGravity(Gravity.CENTER);
+
+                  Button previous = button("⏮");
+                  Button play = button("▶ / ⏸");
+                  Button next = button("⏭");
+
+                  media.addView(previous, new LinearLayout.LayoutParams(0, dp(60), 1));
+                  media.addView(play, new LinearLayout.LayoutParams(0, dp(60), 1));
+                  media.addView(next, new LinearLayout.LayoutParams(0, dp(60), 1));
+
+                  previous.setOnClickListener(v -> MediaListenerService.previous());
+                  play.setOnClickListener(v -> MediaListenerService.playPause());
+                  next.setOnClickListener(v -> MediaListenerService.next());
+
+                  root.addView(media);
+
+                  root.addView(label("VOLUME", 18));
+
+                  volumeText = label("Volume", 14);
+                  root.addView(volumeText);
+
+                  SeekBar volume = new SeekBar(this);
+                  int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                  int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+
+                  volume.setMax(max);
+                  volume.setProgress(current);
+
+                  volume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                      @Override
+                      public void onProgressChanged(SeekBar s, int value, boolean fromUser) {
+                          if (fromUser) {
+                              audioManager.setStreamVolume(
+                                      AudioManager.STREAM_MUSIC,
+                                      value,
+                                      0
+                              );
+                          }
+                          volumeText.setText("Volume: " + value + " / " + max);
+                      }
+
+                      @Override public void onStartTrackingTouch(SeekBar s) {}
+                      @Override public void onStopTrackingTouch(SeekBar s) {}
+                  });
+
+                  root.addView(volume);
+
+                  root.addView(label("EQUALIZER", 20));
+
+                  TextView note = label(
+                          "System EQ availability depends on the phone/audio stack.",
+                          12
+                  );
+                  root.addView(note);
+
+                  String[] presets = {
+                          "Normal",
+                          "Bass Boost",
+                          "Rock",
+                          "Pop",
+                          "Vocal",
+                          "Movie",
+                          "Game"
+                  };
+
+                  Spinner spinner = new Spinner(this);
+                  ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                          this,
+                          android.R.layout.simple_spinner_dropdown_item,
+                          presets
+                  );
+                  spinner.setAdapter(adapter);
+                  root.addView(spinner);
+
+                  SeekBar bass = new SeekBar(this);
+                  bass.setMax(100);
+                  bass.setProgress(50);
+                  root.addView(label("Bass", 14));
+                  root.addView(bass);
+
+                  SeekBar treble = new SeekBar(this);
+                  treble.setMax(100);
+                  treble.setProgress(50);
+                  root.addView(label("Treble", 14));
+                  root.addView(treble);
+
+                  setContentView(root);
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+
+                  try {
+                      MediaListenerService.refresh(
+                              new MediaListenerServiceProxy(this)
+                      );
+                      status.setText("● Media controls ready");
+                  } catch (Exception e) {
+                      status.setText("● Enable Media Access first");
+                  }
+              }
+
+              private static class MediaListenerServiceProxy
+                      extends MediaListenerService {
+                  private final Activity activity;
+
+                  MediaListenerServiceProxy(Activity activity) {
+                      this.activity = activity;
+                  }
+
+                  @Override
+                  public Object getSystemService(String name) {
+                      return activity.getSystemService(name);
+                  }
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PtronEvoController-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
